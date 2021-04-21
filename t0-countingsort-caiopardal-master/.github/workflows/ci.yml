@@ -1,0 +1,107 @@
+name: MO644/MC970 Assignment
+
+on: [push, workflow_dispatch]
+
+jobs:
+
+  # This job builds the repo using CMake
+  build:
+    name: Build
+    runs-on: self-hosted
+    timeout-minutes: 30
+    steps:
+
+      - uses: actions/checkout@v2
+
+      - name: Remove existing build environment
+        run: |
+          cmake -E remove -f build
+
+      - name: Create new build environment
+        run: |
+          cmake -E make_directory build
+
+      - name: Configure CMake
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Compile
+        run: |
+          cmake --build build
+
+  # This job tests the serial and parallel versions of the code
+  test:
+    name: Test input ${{matrix.test}}
+    needs: build
+    runs-on: self-hosted
+    timeout-minutes: 30
+    continue-on-error: true
+
+    # TODO: The input tests are hardcoded. Is there a better way to do this?
+    strategy:
+      matrix:
+        test: [1, 2, 3, 4, 5]
+
+    # In the steps, the serial and parallel code are run separately and their
+    # stderr and stdout are saved to separate files. The stderr contains a
+    # single line with the time (in seconds) and the stdout contains the program
+    # output. The output is compared with `diff` and the speedup is calculated
+    # with `bc`.
+    steps:
+
+      - name: Run serial
+        shell: bash
+        run: |
+          build/serial tests/${{matrix.test}}.in \
+              1>serial.${{matrix.test}}.out \
+              2>serial.${{matrix.test}}.time
+          cat serial.${{matrix.test}}.out
+
+      - name: Run parallel
+        shell: bash
+        run: |
+          build/parallel tests/${{matrix.test}}.in \
+              1>parallel.${{matrix.test}}.out \
+              2>parallel.${{matrix.test}}.time
+          cat parallel.${{matrix.test}}.out
+
+      - name: Compare results
+        shell: bash
+        run: |
+          diff -u tests/${{matrix.test}}.out parallel.${{matrix.test}}.out
+
+      - name: Compute speedup
+        shell: bash
+        run: |
+          ser=$(<serial.${{matrix.test}}.time)
+          par=$(<parallel.${{matrix.test}}.time)
+          speedup=$(bc -l <<< "scale=4; $ser/$par")
+          echo "  Serial runtime: ${ser}s"
+          echo "Parallel runtime: ${par}s"
+          echo "         Speedup: ${speedup}x"
+          if [[ ! -f runtime.csv ]]; then
+            echo "# Input,Serial time,Parallel time,Speedup" > runtime.csv
+          fi
+          echo "${{matrix.test}},$ser,$par,$speedup" >> runtime.csv
+
+      - name: Upload output
+        uses: actions/upload-artifact@v2
+        with:
+          name: Output
+          path: |
+            parallel.${{matrix.test}}.out
+
+  # Upload runtime artifacts. This is simply a CSV file with four columns: input
+  # number, serial time, parallel time, and speedup.
+  artifacts:
+    name: Upload Artifacts
+    needs: test
+    runs-on: self-hosted
+
+    steps:
+
+      - name: Upload CSV table
+        uses: actions/upload-artifact@v2
+        with:
+          name: Runtime
+          path: runtime.csv

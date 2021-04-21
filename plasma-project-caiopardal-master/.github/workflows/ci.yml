@@ -1,0 +1,17 @@
+name: ci
+
+on:
+  push:
+
+jobs:
+  docker_test:
+    runs-on: w-docker
+    container:
+      image: ompcluster/plasma-dev:latest
+    steps:
+      # To use this repository's private action,
+      # you must check out the repository
+      - name: Build and test
+        uses: actions/checkout@v2
+      - name: Hello world action step
+        uses: ./ # Uses an action in the root directory
